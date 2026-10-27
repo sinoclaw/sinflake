@@ -149,7 +149,7 @@ go run ./cmd/sinflake-server -addr :8080 -mode both -step 2000 -machine 1 -keys 
 
 ## 六、边界与实测
 
-本机（Intel N150）实测：
+实测（低功耗 N150 小主机）：
 
 ```
 BenchmarkSinflakeNextID           38600 ns/op    ← 见下方说明
@@ -207,15 +207,15 @@ MIT。位布局与 API 语义源自 [sony/sonyflake](https://github.com/sony/son
 3. ~~MySQL 两条链路未在真实库上验证~~ → **已完成**，见第九节（sindb 9.7.2 真库回归，4 项全过，连跑 3 轮稳定）。
 4. Leaf 的 `LeafServerException`/`NoKeyException` 类层次、`spring-boot` 配置项（`leaf.properties`）没有照搬，Go 侧用 error + flag 代替。
 
-## 九、真库回归（sindb 9.7.2 / MySQL 兼容）
+## 九、真库回归（MySQL 兼容库 9.7.2）
 
-在 `/home/sinoclaw/sinflake-it`（独立 module，仅此处引 `go-sql-driver/mysql`，主库仍是零依赖）
-通过 SSH 隧道连 `127.0.0.1:13306 → 210.16.163.25:3306`，只操作**独立库 `sinflake_test`**，
-不碰 `sino_order_system`。
+在一个独立的 `sinflake-it` module（，仅此处引 `go-sql-driver/mysql`，主库仍是零依赖）
+通过 SSH 隧道把远端数据库映射到本地端口，只操作**独立库 `sinflake_test`**，不碰任何业务库。
 
 ```bash
-cd /home/sinoclaw/sinflake-it
-GOTOOLCHAIN=local PATH=/home/sinoclaw/sdk/go/bin:$PATH go test ./... -count=1 -v
+# 回归模块不放本仓（它要引 MySQL 驱动，会破坏主库零依赖），单独放一处
+cd ../sinflake-it
+go test ./... -count=1 -v
 ```
 
 4 个用例与结果：
@@ -288,7 +288,7 @@ default:
 | 项 | 版本 | 状态 |
 |---|---|---|
 | Go | 1.21+（本机 1.27.3 实测） | ✅ |
-| sindb | 9.7.2（MySQL 9.7 兼容） | ✅ 真库回归 4 项全过 |
+| MySQL 9.7 兼容实现（sindb 9.7.2） | ✅ 真库回归 4 项全过 |
 | MySQL | 8.x / 9.x | ⚠️ 同族语法，未单独回归 |
 | MariaDB / PostgreSQL | — | ❌ 未验证 |
 | 第三方依赖 | 无 | ✅ `go.sum` 不存在 |
