@@ -44,6 +44,28 @@ sinflake.Compose(sf, t, 3, 1)   // 反向拼
 与 sonyflake 同名同义的还有：`NewSinflake`、`BitLenTime/BitLenSequence/BitLenMachineID`、
 `Settings{StartTime, MachineID, CheckMachineID}`、默认纪元 `2014-09-01 UTC`、默认机器号取私有网卡 IP 低 16 位。
 
+### 位布局可选（与既有系统对齐）
+
+时间永远在最高 39 位（10ms 一片），低 24 位有两种排法：
+
+| 布局 | 低 24 位排法 | 单机上限 | 用途 |
+|---|---|---|---|
+| `LayoutSony`（默认） | 序列 8 位 \| 机器号 16 位 | ≈2.56 万/s | 与 sony/sonyflake 逐位一致 |
+| `LayoutMachine8Seq16` | 机器号 8 位 \| 序列 16 位 | ≈655 万/s | 与 sino-order-system 既有单号口径逐位一致 |
+
+```go
+sf, _ := sinflake.New(sinflake.Settings{
+    StartTime: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), // 必须与目标系统一致
+    Layout:    sinflake.LayoutMachine8Seq16,
+    MachineID: func() (uint16, error) { return 1, nil },     // 8 位布局只有 0~255
+})
+id, _ := sf.NextID()
+sf.DecodeMachineID(id) // 按布局解，不会与 sony 布局混淆
+```
+
+两种布局解出的**时刻相同**（时间位一致），但机器号与序列会互换 —— 换布局前必须先做逐字节对拍
+（本仓 `layout_test.go` 就是把订单系统 `nextSnow()` 当 oracle 的样例）。
+
 **时钟回拨策略**是 Leaf 带过来的能力，默认保持 sonyflake 语义：
 
 | 策略 | 行为 | 适用 |

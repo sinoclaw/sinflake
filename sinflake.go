@@ -71,6 +71,9 @@ type Settings struct {
 	CheckMachineID  func(uint16) bool
 	BackwardPolicy  BackwardPolicy
 	MaxBackwardWait time.Duration
+	// Layout 选择位布局：默认 LayoutSony（sony 官方：时间39|序列8|机器号16）；
+	// 要与 sino-order-system 的既有单号口径对齐时用 LayoutMachine8Seq16（时间39|机器号8|序列16）。
+	Layout Layout
 	// RandomSequenceStart 对齐 Leaf：每个新时间片的起始序列号随机取 0~99，
 	// 序列用尽后也重新随机，避免 ID 连号被外部推算。默认 false（保持 sonyflake 语义）。
 	RandomSequenceStart bool
@@ -87,6 +90,7 @@ type Sinflake struct {
 	machineID   uint16
 
 	policy      BackwardPolicy
+	layout      Layout
 	maxBackward time.Duration
 	randomStart bool
 	rnd         *rand.Rand
@@ -109,8 +113,9 @@ func New(st Settings) (*Sinflake, error) {
 	}
 
 	sf := &Sinflake{
-		sequence:    uint16(1<<BitLenSequence - 1),
+		sequence:    st.Layout.seqMask(), // 首号必然触发「新时间片」分支
 		policy:      st.BackwardPolicy,
+		layout:      st.Layout,
 		maxBackward: st.MaxBackwardWait,
 		randomStart: st.RandomSequenceStart,
 		rnd:         rand.New(rand.NewSource(now().UnixNano())),
@@ -137,6 +142,10 @@ func New(st Settings) (*Sinflake, error) {
 		return nil, err
 	}
 	if st.CheckMachineID != nil && !st.CheckMachineID(sf.machineID) {
+		return nil, ErrInvalidMachineID
+	}
+	if sf.machineID > sf.layout.MaxMachineID() {
+		// 例如用 machine8-seq16 布局却给了 300：装不下，直接拒绝而不是截断
 		return nil, ErrInvalidMachineID
 	}
 	return sf, nil
@@ -188,7 +197,7 @@ func (sf *Sinflake) NextIDs(n int) ([]uint64, error) {
 
 // nextLogical 完全沿用 sonyflake 的算法：时间片不倒退，序列溢出时把逻辑时间推进一格。
 func (sf *Sinflake) nextLogical() (uint64, error) {
-	const maskSequence = uint16(1<<BitLenSequence - 1)
+	maskSequence := sf.layout.seqMask()
 
 	current := sf.currentElapsedTime()
 	if sf.elapsedTime < current {
@@ -210,7 +219,7 @@ func (sf *Sinflake) nextLogical() (uint64, error) {
 
 // nextStrict 对齐美团 Leaf：回拨在窗口内等待重试，窗口外报错；序列用尽等下一时间片。
 func (sf *Sinflake) nextStrict() (uint64, error) {
-	const maskSequence = uint16(1<<BitLenSequence - 1)
+	maskSequence := sf.layout.seqMask()
 
 	for {
 		current := sf.currentElapsedTime()
@@ -262,9 +271,11 @@ func (sf *Sinflake) toID() (uint64, error) {
 	if sf.elapsedTime >= 1<<BitLenTime {
 		return 0, ErrOverTimeLimit
 	}
-	return uint64(sf.elapsedTime)<<(BitLenSequence+BitLenMachineID) |
-		uint64(sf.sequence)<<BitLenMachineID |
-		uint64(sf.machineID), nil
+	base := uint64(sf.elapsedTime) << (BitLenSequence + BitLenMachineID)
+	if sf.layout == LayoutMachine8Seq16 {
+		return base | uint64(sf.machineID&0xFF)<<16 | uint64(sf.sequence), nil
+	}
+	return base | uint64(sf.sequence&0xFF)<<BitLenMachineID | uint64(sf.machineID), nil
 }
 
 // MachineID 返回本实例的机器号。
@@ -314,12 +325,14 @@ func Compose(sf *Sinflake, t time.Time, sequence uint16, machineID uint16) (uint
 	if elapsed >= 1<<BitLenTime {
 		return 0, ErrOverTimeLimit
 	}
-	if sequence >= 1<<BitLenSequence {
+	if uint32(sequence) >= uint32(1<<sf.layout.BitsSequence()) {
 		return 0, ErrInvalidSequence
 	}
-	return uint64(elapsed)<<(BitLenSequence+BitLenMachineID) |
-		uint64(sequence)<<BitLenMachineID |
-		uint64(machineID), nil
+	base := uint64(elapsed) << (BitLenSequence + BitLenMachineID)
+	if sf.layout == LayoutMachine8Seq16 {
+		return base | uint64(machineID&0xFF)<<16 | uint64(sequence), nil
+	}
+	return base | uint64(sequence)<<BitLenMachineID | uint64(machineID), nil
 }
 
 // Decompose 拆解 ID 的各段。

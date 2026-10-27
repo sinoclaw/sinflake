@@ -2,6 +2,30 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 semver。
 
+## [0.2.0] - 2026-10-27
+
+### Added
+
+- **`Layout` 位布局可选**，解决「同一份代码要服务两种既有口径」的问题：
+  - `LayoutSony`（默认）：时间(39) | 序列(8) | 机器号(16)，与 sony/sonyflake 逐位一致，单机 ≈2.56 万/s。
+  - `LayoutMachine8Seq16`：时间(39) | **机器号(8)** | **序列(16)**，与 sino-order-system 的订单号口径
+    （`internal/pkg/orderid/v2.go` 的 `nextSnow()`）逐位一致，单机 ≈655 万/s。
+  - `Layout` 上的辅助：`BitsSequence()` / `BitsMachine()` / `MaxMachineID()` /
+    `PerTickCapacity()` / `PerSecondCapacity()`。
+  - 按布局解码：包级 `SequenceNumberWithLayout` / `MachineIDWithLayout` / `DecomposeWithLayout`，
+    生成器上 `DecodeSequence` / `DecodeMachineID` / `Decompose`（注意 `sf.MachineID()` 仍返回本实例自己的机器号）。
+  - `Compose` 按生成器布局拼装；序列越界判断也按布局（sony 8 位 / machine8-seq16 16 位）。
+  - 机器号超出布局范围（如 8 位布局给了 300）时返回 `ErrInvalidMachineID`，**不静默截断**。
+
+### Verified
+
+- **与既有订单系统的逐字节对拍**：把 `v2.go` 的 `nextSnow()` 原样复刻成 oracle，
+  在生产同款参数（起点 2025-01-01 UTC、机器号 1、10ms 拍）下生成 **66,771 个号**，
+  覆盖常规取号、同拍密集 1000 个、16 位序列溢出边界（65536+200）、100ms 时钟回拨，
+  **全部与 sinflake 逐字节相同**。
+- 线上真实单号反解：`02UUNGvcEcFqD2bOtKchUk` → 机器号 1 / 序列 62；`02SMcKj42guNG1mgHkisKJ` → 机器号 5 / 序列 37；
+  两种布局解出的**时刻一致**（时间位相同），但机器号与序列在 sony 布局下会被读反 —— 这个用例同时钉住这一点。
+
 ## [0.1.0] - 2026-10-27
 
 首个可发布版本。位布局与 API 语义沿用 [sony/sonyflake](https://github.com/sony/sonyflake)，
